@@ -1,0 +1,14 @@
+{
+  "name": "moonsave",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "月存：以每月回報為核心的儲蓄 PWA",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env server.mjs",
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "test": "node --test",
+    "build": "node scripts/build.mjs"
+  }
+}
