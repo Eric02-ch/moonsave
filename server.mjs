@@ -57,6 +57,7 @@ export function createServer({ apiKey = process.env.OPENAI_API_KEY, model = proc
     if (!['GET', 'HEAD'].includes(req.method)) return json(res, 405, { error: '不支援這個方法。' });
     try {
       const pathname = decodeURIComponent(url.pathname);
+      if (pathname.includes('\\')) return json(res, 403, { error: '禁止存取。' });
       const filename = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
       if (!filename.startsWith(root + path.sep) && filename !== path.join(root, 'index.html')) return json(res, 403, { error: '禁止存取。' });
       const content = await readFile(filename);
