@@ -1,3 +1,4 @@
+import { validateV3 } from './finance.js';
 export const moneyKeys = ['salary', 'otherIncome', 'main', 'emergency', 'bills', 'cardReserve', 'cardDebt', 'wallet', 'saved', 'extraSaved', 'withdrawn'];
 export const defaultSettings = { monthlyGoal: 3000, emergencyFloor: 30000, emergencyGoal: 50000 };
 export const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -25,6 +26,7 @@ export function validateSettings(s) {
   return clean;
 }
 export function validateBackup(data) {
+  if (data?.version === 3) { const clean = validateV3(data); if (clean.legacy) clean.legacy = validateBackup(clean.legacy); return clean; }
   if (!data || data.version !== 1 || !Array.isArray(data.reports) || data.reports.length > 600) throw new Error('備份格式不正確，或超過 600 個月。');
   const settings = validateSettings(data.settings);
   const reports = data.reports.map(validateReport);

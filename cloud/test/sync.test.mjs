@@ -3,12 +3,20 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { handleSync } from '../lib/sync-handler.mjs';
 import { defaultSettings, makeDemo } from '../public/app/core.js';
+import { demo } from '../public/app/finance.js';
 function database() {
   const sql = new DatabaseSync(':memory:');
   sql.exec('CREATE TABLE financial_snapshots (user_id TEXT PRIMARY KEY, payload TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL)');
   return { prepare(query) { return { bind(...args) { return { async first() { return sql.prepare(query).get(...args) || null; } }; } }; } };
 }
 const payload = () => ({ version: 1, settings: { ...defaultSettings }, reports: makeDemo() });
+test('新版回報與跨期草稿雲端往返，舊客戶端不得降版覆蓋', async () => {
+  const db=database(),opts={db,userId:'a'},data=demo();
+  assert.equal((await handleSync(request('a',{method:'PUT',data}),opts)).status,200);
+  assert.deepEqual((await (await handleSync(request('a'),opts)).json()).payload,data);
+  assert.equal((await handleSync(request('a',{method:'PUT',revision:1,data:payload()}),opts)).status,409);
+  assert.equal((await (await handleSync(request('a'),opts)).json()).revision,1);
+});
 function request(user, { method = 'GET', revision = 0, data, origin = 'https://sync.test', extra = {} } = {}) {
   return new Request('https://sync.test/api/sync', { method, headers: { 'X-MoonSave-User': user, Origin: origin, 'Content-Type': 'application/json', 'If-Match': String(revision), ...extra }, ...(method === 'PUT' ? { body: JSON.stringify(data || payload()) } : {}) });
 }

@@ -23,6 +23,8 @@ export async function handleSync(request, { db, userId, now = () => new Date().t
     const buffer = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.byteLength; }
     payload = validateBackup(JSON.parse(new TextDecoder().decode(buffer)));
   } catch (error) { return json(400, { error: error.message || '資料格式錯誤。' }); }
+  const prior = await db.prepare('SELECT payload, revision, updated_at FROM financial_snapshots WHERE user_id = ?').bind(userId).first();
+  if (prior && (JSON.parse(prior.payload).version || 1) > payload.version) return json(409, { error: '此裝置版本較舊，請重新載入新版再同步，避免覆蓋新資料。' });
   const serialized = JSON.stringify(payload), updatedAt = now();
   const updated = revision === 0
     ? await db.prepare('INSERT INTO financial_snapshots (user_id, payload, revision, updated_at) VALUES (?, ?, 1, ?) ON CONFLICT(user_id) DO NOTHING RETURNING revision').bind(userId, serialized, updatedAt).first()

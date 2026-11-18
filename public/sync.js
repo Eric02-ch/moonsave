@@ -21,7 +21,7 @@ export function createSync({ getPayload, applyPayload, onStatus, canApplyRemote 
       if (result.revision !== revision && result.payload) { applyPayload(result.payload); revision = result.revision; saveMeta(); }
       notify('ok', revision ? '已與雲端同步' : '尚無雲端資料，可匯入備份或開始回報');
     } catch (error) { notify('error', error.message); }
-    finally { busy = false; }
+    finally { busy = false; if (dirty && !conflicted) schedule(); }
   }
   async function upload() {
     if (!user || busy || conflicted || !dirty) return;
