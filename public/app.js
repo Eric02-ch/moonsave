@@ -1,14 +1,46 @@
-import { defaultSettings, today, formatMoney as money, metrics, comparison, localInsights, validateReport, validateSettings, validateBackup, sortReports, makeDemo, moneyKeys } from './core.js';
+import { defaultSettings, today, formatMoney as money, metrics, comparison, localInsights, validateReport, validateSettings, validateBackup, validateDraft, sortReports, makeDemo, moneyKeys } from './core.js';
+import { CLOUD_URL, isCloud, createSync } from './sync.js';
 
-const KEY = 'moonsave.v1', DRAFT = 'moonsave.draft.v1';
+let KEY = 'moonsave.v1', DRAFT = 'moonsave.draft.v1';
 const app = document.querySelector('#app');
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 let state = { version: 1, settings: { ...defaultSettings }, reports: [] };
 let storageError = false, editingMonth = null, aiReady = false;
-try { const saved = localStorage.getItem(KEY); if (saved) state = validateBackup(JSON.parse(saved)); } catch { storageError = true; }
+let cloudSync = null, cloudReady = !isCloud, cloudStatus = { kind: 'busy', text: '正在確認登入與雲端資料…' }, hasUnsavedForm = false;
+try { const saved = !isCloud && localStorage.getItem(KEY); if (saved) state = validateBackup(JSON.parse(saved)); } catch { storageError = true; }
 function persist(next) {
-  try { localStorage.setItem(KEY, JSON.stringify(next)); state = next; return true; }
+  try { localStorage.setItem(KEY, JSON.stringify(next)); state = next; cloudSync?.changed(); return true; }
   catch { toast('儲存失敗，資料尚未寫入。請先匯出備份並確認瀏覽器空間。'); return false; }
+}
+function backupPayload() {
+  const raw = localStorage.getItem(DRAFT);
+  return validateBackup({ ...state, draft: raw ? validateDraft(JSON.parse(raw)) : undefined });
+}
+function downloadBackup(payload, suffix = '') {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
+  const a = document.createElement('a'); a.href = url; a.download = `moonsave-backup-${today()}${suffix}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function applyBackup(payload) {
+  const clean = validateBackup(payload), { draft, ...next } = clean;
+  const oldState = localStorage.getItem(KEY), oldDraft = localStorage.getItem(DRAFT);
+  try {
+    localStorage.setItem(KEY, JSON.stringify(next));
+    if (draft) localStorage.setItem(DRAFT, JSON.stringify(draft)); else localStorage.removeItem(DRAFT);
+    state = next; hasUnsavedForm = false;
+  } catch (error) {
+    try { if (oldState === null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, oldState); if (oldDraft === null) localStorage.removeItem(DRAFT); else localStorage.setItem(DRAFT, oldDraft); } catch {}
+    throw new Error('本機儲存空間不足，資料未完成載入，請先備份。');
+  }
+}
+function updateCloudStatus(status) {
+  cloudStatus = status;
+  document.querySelectorAll('[data-sync-status]').forEach(el => { el.textContent = status.text; el.dataset.kind = status.kind; });
+  document.querySelector('.local-badge').textContent = isCloud ? `☁ ${status.text}` : '● 本機儲存';
+  if (isCloud && !cloudReady && (status.user || status.kind === 'error')) { cloudReady = true; render(); }
+}
+function cloudPanel() {
+  if (!isCloud) return `<section class="card settings-section"><h2>讓 Chrome 和手機讀到同一份資料</h2><p>目前這個 GitHub Pages 網址是本機版。先匯出含草稿備份，再到私人雲端版登入並匯入；之後請固定使用雲端版網址。</p><a class="button primary" href="${CLOUD_URL}" target="_blank" rel="noopener">開啟私人雲端版 ↗</a></section>`;
+  return `<section class="card settings-section"><div class="section-heading"><h2>☁ 帳號與雲端同步</h2>${pill('私人帳號資料')}</div><p>登入身分：${esc(cloudStatus.user?.displayName || '尚未完成登入')}</p><p data-sync-status data-kind="${esc(cloudStatus.kind)}">${esc(cloudStatus.text)}</p><p class="fine-print">儲存回報、草稿或目標後自動同步；每 20 秒或回到此分頁時查看新版本。離線變更會保留在本機，重新連線後重試。</p><div class="actions"><button class="button secondary" id="sync-now">立即同步／重試</button><button class="button secondary" id="sync-pull">備份本機並載入雲端版本</button><a class="button secondary" href="/signout-with-chatgpt?return_to=%2F" target="_top">登出</a></div><p class="fine-print">同步衝突時不會自動覆蓋。載入雲端前，會先下載目前本機資料的備份。更換帳號時，本機快取依帳號分開保存。</p></section>`;
 }
 function toast(message) { const el = document.querySelector('#toast'); el.textContent = message; el.classList.add('visible'); setTimeout(() => el.classList.remove('visible'), 4500); }
 async function confirmAction(title, message) {
@@ -28,7 +60,7 @@ function garden(progress) {
 }
 function overview() {
   const r = latest();
-  if (!r) return heading('A LITTLE EACH MONTH', '把日子，慢慢存好。', '不必記下每一筆花費。從每月一次的回報，照顧自己的未來。') + `<section class="welcome card"><div><span class="pill">你的第一步</span><h2>留一點錢，<br>給未來的自己。</h2><p>設定目標、盤點餘額，看看這個月真正留下多少。<br>先用示範資料逛逛，也可以直接開始。</p><div class="actions"><a href="#report" class="button primary">開始第一次回報 ↗</a><button class="button secondary" id="load-demo">體驗示範資料</button></div><small>無須登入 · 無銀行串接 · 資料保留在本機</small></div>${garden(0)}</section><div class="intro-grid"><article><b>01 / 輸入數字</b><p>沿用熟悉的帳戶分區，每月更新餘額。</p></article><article><b>02 / 看見累積</b><p>將儲蓄、預留款和信用卡欠款分清楚。</p></article><article><b>03 / 留下下一步</b><p>回顧本月變化，慢慢找到自己的步調。</p></article></div>`;
+  if (!r) return heading('A LITTLE EACH MONTH', '把日子，慢慢存好。', '不必記下每一筆花費。從每月一次的回報，照顧自己的未來。') + `<section class="welcome card"><div><span class="pill">你的第一步</span><h2>留一點錢，<br>給未來的自己。</h2><p>設定目標、盤點餘額，看看這個月真正留下多少。<br>先用示範資料逛逛，也可以直接開始。</p><div class="actions"><a href="#report" class="button primary">開始第一次回報 ↗</a><button class="button secondary" id="load-demo">體驗示範資料</button></div><small>${isCloud ? '私人登入 · 帳號同步 · 本機快取' : '無須登入 · 無銀行串接 · 資料保留在本機'}</small></div>${garden(0)}</section><div class="intro-grid"><article><b>01 / 輸入數字</b><p>沿用熟悉的帳戶分區，每月更新餘額。</p></article><article><b>02 / 看見累積</b><p>將儲蓄、預留款和信用卡欠款分清楚。</p></article><article><b>03 / 留下下一步</b><p>回顧本月變化，慢慢找到自己的步調。</p></article></div>`;
   const m = metrics(r, state.settings), c = comparison(r, state.reports, state.settings);
   const progress = Math.min(100, Math.max(0, m.goalProgress * 100));
   return heading('YOUR MONTHLY CHAPTER', '每一小步，都算數。', `${monthLabel(r.month)} 的財務日記 · 盤點於 ${esc(r.asOf)}`, '<a class="button primary" href="#report">＋ 填寫月回報</a>') +
@@ -71,8 +103,8 @@ function settingsPage() {
   const s = state.settings;
   return heading('MAKE ROOM FOR YOUR FUTURE', '照自己的步調設定。', '目標可以調整，持續使用比漂亮的數字更重要。') +
     `<section class="card"><h2>我的儲蓄目標</h2><form id="settings-form"><div class="form-grid">${[['monthlyGoal', '每月基本儲蓄目標'], ['emergencyFloor', '備用金底線'], ['emergencyGoal', '下一階段備用金目標']].map(([key, label]) => `<label class="field"><span>${label}</span><div class="money-input"><span>NT$</span><input type="number" name="${key}" value="${s[key]}" min="1" max="100000000" step="1" required></div></label>`).join('')}</div><button class="button primary">儲存目標</button><p id="settings-error" class="form-error" role="alert"></p></form></section>` +
-    `<section class="card settings-section"><h2>資料，留在自己手上。</h2><p>回報儲存在目前瀏覽器，沒有跨裝置同步。清除網站資料或更換手機可能遺失，記得定期匯出備份。</p><div class="actions"><button id="export" class="button secondary">↓ 匯出 JSON 備份</button><label class="button secondary file-button">↑ 匯入備份<input id="import" type="file" accept=".json,application/json"></label></div><p class="fine-print">備份包含已確認回報及目標，不含草稿。匯入前會檢查格式，並請你確認是否取代現有紀錄。</p></section>` +
-    `<section class="card settings-section"><h2>先逛逛，再開始。</h2><p>載入三個月的虛構資料，體驗進度、紀錄與月報。</p><button id="load-demo" class="button secondary">載入示範資料</button><hr><h3>清除本機資料</h3><p class="fine-print">只影響這個瀏覽器。建議先匯出備份。</p><button id="clear" class="button secondary danger">清除全部回報與草稿</button></section>`;
+    cloudPanel() + `<section class="card settings-section"><h2>資料，留在自己手上。</h2><p>${isCloud ? '回報、草稿與目標會儲存到目前登入帳號的私人雲端空間，本機同時保留快取。' : '目前使用本機版，資料不會因複製網址而轉移；可用含草稿備份搬到私人雲端版。'}建議定期備份。</p><div class="actions"><button id="export" class="button secondary">↓ 匯出含草稿備份</button><label class="button secondary file-button">↑ 匯入備份<input id="import" type="file" accept=".json,application/json"></label></div><p class="fine-print">備份包含已確認回報、目標與待確認草稿。匯入前會檢查格式，並請你確認是否取代現有紀錄${isCloud ? '及同步到目前帳號' : ''}。</p></section>` +
+    `<section class="card settings-section"><h2>先逛逛，再開始。</h2><p>載入三個月的虛構資料，體驗進度、紀錄與月報。</p><button id="load-demo" class="button secondary">載入示範資料</button><hr><h3>${isCloud ? '清除目前帳號資料' : '清除本機資料'}</h3><p class="fine-print">${isCloud ? '清除會同步到雲端與其他裝置。' : '只影響這個瀏覽器。'}建議先匯出備份。</p><button id="clear" class="button secondary danger">清除全部回報與草稿</button></section>`;
 }
 function readForm(form, confirmed = false) {
   const data = Object.fromEntries(new FormData(form));
@@ -87,16 +119,16 @@ function bind() {
   });
   const form = document.querySelector('#report-form');
   if (form) {
-    const preview = () => { const d = readForm(form); const n = (d.saved || 0) + (d.extraSaved || 0) - (d.withdrawn || 0); document.querySelector('#form-preview').textContent = `目前填寫的回報淨儲蓄：${money(n)}`; };
+    const preview = () => { const d = readForm(form); const complete = ['saved', 'extraSaved', 'withdrawn'].every(k => d[k] !== null); const n = (d.saved || 0) + (d.extraSaved || 0) - (d.withdrawn || 0); document.querySelector('#form-preview').textContent = complete ? `目前填寫的回報淨儲蓄：${money(n)}` : '儲蓄欄位尚未補齊，暫不計算淨儲蓄。'; };
     form.addEventListener('input', preview); preview();
-    document.querySelector('#save-draft').addEventListener('click', () => { try { localStorage.setItem(DRAFT, JSON.stringify(readForm(form))); toast('草稿已留在這台裝置。'); } catch { toast('無法暫存，請確認瀏覽器儲存空間。'); } });
+    document.querySelector('#save-draft').addEventListener('click', () => { try { localStorage.setItem(DRAFT, JSON.stringify(validateDraft(readForm(form)))); hasUnsavedForm = false; cloudSync?.changed(); toast(isCloud ? '草稿已存本機，正在同步到目前帳號。' : '草稿已留在這台裝置。'); } catch (error) { toast(error.message || '無法暫存，請確認瀏覽器儲存空間。'); } });
     form.addEventListener('submit', async event => {
       event.preventDefault(); const error = document.querySelector('#form-error');
       try {
         const r = validateReport(readForm(form, true));
         if (!editingMonth && state.reports.some(old => old.month === r.month) && !await confirmAction('更新同月份回報？', `${monthLabel(r.month)} 已有紀錄。確認後會以這次填寫的資料取代。`)) return;
         const next = { ...state, reports: [...state.reports.filter(old => old.month !== r.month), r] };
-        if (persist(next)) { try { localStorage.removeItem(DRAFT); } catch {} editingMonth = null; location.hash = 'overview'; toast('這個月的努力，留下來了。'); }
+        if (persist(next)) { try { localStorage.removeItem(DRAFT); } catch {} hasUnsavedForm = false; cloudSync?.changed(); editingMonth = null; location.hash = 'overview'; toast('這個月的努力，留下來了。'); }
       } catch (e) { error.textContent = e.message; }
     });
   }
@@ -110,20 +142,19 @@ function bind() {
     catch (e) { document.querySelector('#settings-error').textContent = e.message; }
   });
   document.querySelector('#export')?.addEventListener('click', () => {
-    const url = URL.createObjectURL(new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }));
-    const a = document.createElement('a'); a.href = url; a.download = `moonsave-backup-${today()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); toast('備份已匯出，請妥善保管財務資料。');
+    try { downloadBackup(backupPayload()); toast('含草稿備份已匯出，請妥善保管財務資料。'); } catch (error) { toast(`匯出失敗：${error.message}`); }
   });
   document.querySelector('#import')?.addEventListener('change', async event => {
     try {
       const file = event.target.files[0]; if (!file) return;
       if (file.size > 2000000) throw new Error('備份檔案過大，請使用小於 2 MB 的 JSON。');
       const next = validateBackup(JSON.parse(await file.text()));
-      if (await confirmAction('匯入並取代資料？', `備份包含 ${next.reports.length} 個月的回報，將取代目前的回報與目標。`)) { if (persist(next)) { render(); toast('備份已還原。'); } }
+      if (await confirmAction('匯入並取代資料？', `備份包含 ${next.reports.length} 個月的回報${next.draft ? '及一份待確認草稿' : ''}，將取代目前的回報、草稿與目標${isCloud ? '，並同步至你登入帳號的私人雲端空間' : ''}。`)) { applyBackup(next); cloudSync?.changed(); render(); toast('備份已還原。'); }
     } catch (e) { toast(`匯入失敗：${e.message}`); } finally { event.target.value = ''; }
   });
   document.querySelector('#clear')?.addEventListener('click', async () => {
-    if (await confirmAction('清除本機資料？', '將清除所有回報、目標設定與草稿。請先匯出需要的資料。')) {
-      if (persist({ version: 1, reports: [], settings: { ...defaultSettings } })) { try { localStorage.removeItem(DRAFT); } catch {} editingMonth = null; render(); toast('本機資料已清除。'); }
+    if (await confirmAction(isCloud ? '清除帳號資料？' : '清除本機資料？', `將清除所有回報、目標設定與草稿。${isCloud ? '此清除會同步到雲端及其他裝置。' : ''}請先匯出需要的資料。`)) {
+      if (persist({ version: 1, reports: [], settings: { ...defaultSettings } })) { try { localStorage.removeItem(DRAFT); } catch {} cloudSync?.changed(); editingMonth = null; render(); toast('資料已清除。'); }
     }
   });
   document.querySelector('#ai-form')?.addEventListener('submit', async event => {
@@ -137,18 +168,51 @@ function bind() {
     } catch (e) { result.textContent = `AI 回覆未完成：${e.name === 'TimeoutError' ? '請求逾時，請稍後再試。' : e.message}`; }
     finally { button.disabled = false; }
   });
+  document.querySelector('#sync-now')?.addEventListener('click', () => cloudSync?.retry());
+  document.querySelector('#sync-pull')?.addEventListener('click', async () => {
+    if (!await confirmAction('載入雲端版本？', '會先下載目前本機資料備份，再以雲端版本取代本機已存資料。未儲存的表單內容不在備份內。')) return;
+    try { downloadBackup(backupPayload(), '-before-cloud-reload'); await cloudSync.pullReplacingLocal(); } catch (error) { toast(error.message); }
+  });
 }
 const pages = { overview, report: reportPage, history: historyPage, assistant: assistantPage, settings: settingsPage };
 let lastPage;
 function render() {
+  if (isCloud && !cloudReady) { app.innerHTML = '<section class="card empty"><h2>正在載入你的私人資料…</h2><p>確認登入後，才能讀取或同步回報。</p></section>'; return; }
+  hasUnsavedForm = false;
   const page = Object.hasOwn(pages, location.hash.slice(1)) ? location.hash.slice(1) : 'overview';
   if (lastPage === 'report' && page !== 'report') editingMonth = null;
   app.innerHTML = (storageError ? '<div class="notice warning">本機資料無法讀取。為避免覆蓋原始資料，請先使用瀏覽器工具保留 moonsave.v1 的內容，再重新開始。此工作階段暫停寫入。</div>' : '') + pages[page]();
+  if (!isCloud) app.insertAdjacentHTML('afterbegin', `<div class="notice">這是各瀏覽器獨立儲存的本機版。想在 Chrome 與手機同步，請<a class="text-link" href="${CLOUD_URL}" target="_blank" rel="noopener">開啟私人雲端版 ↗</a>。舊資料可從「目標與備份」匯出，含草稿一起搬移。</div>`);
+  if (page !== 'report') {
+    try {
+      const draft = JSON.parse(localStorage.getItem(DRAFT));
+      if (draft) { validateDraft(draft); const filled = moneyKeys.filter(k => draft[k] != null && draft[k] !== '').length; app.insertAdjacentHTML('afterbegin', `<div class="notice"><strong>${esc(draft.month)} 待確認草稿</strong> · 已填 ${filled}/${moneyKeys.length} 項金額${draft.emergency == null ? '' : ` · 草稿備用金 ${money(draft.emergency)}`}。<a class="text-link" href="#report">繼續填寫 ↗</a></div>`); }
+    } catch {}
+  }
   document.querySelectorAll('[data-page]').forEach(a => { a.classList.toggle('active', a.dataset.page === page); if (a.dataset.page === page) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   lastPage = page; bind();
+  if (isCloud) updateCloudStatus(cloudStatus);
   if (storageError) app.querySelectorAll('button,input,textarea').forEach(el => el.disabled = true);
 }
 window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); app.focus({ preventScroll: true }); });
 render();
-fetch('./api/status').then(r => r.ok ? r.json() : null).then(data => { aiReady = data?.ai === true; if (location.hash === '#assistant') render(); }).catch(() => {});
+if (isCloud) {
+  cloudSync = createSync({
+    getPayload: backupPayload,
+    canApplyRemote: () => !hasUnsavedForm,
+    applyPayload: payload => { applyBackup(payload); render(); },
+    onStatus: updateCloudStatus
+  });
+  cloudSync.start(user => {
+    KEY = `moonsave.v1.user.${user.id}`; DRAFT = `moonsave.draft.v1.user.${user.id}`;
+    try { const raw = localStorage.getItem(KEY); state = raw ? validateBackup(JSON.parse(raw)) : { version: 1, settings: { ...defaultSettings }, reports: [] }; } catch { storageError = true; throw new Error('本機帳號快取無法讀取，請先保留原始資料。'); }
+    document.querySelector('.sidebar-bottom').textContent = '☁ 私人帳號同步 · 本機保留快取';
+  });
+  setInterval(() => cloudSync.refresh(), 20000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) cloudSync.retry(); });
+  window.addEventListener('online', () => cloudSync.retry());
+} else {
+  fetch('./api/status').then(r => r.ok ? r.json() : null).then(data => { aiReady = data?.ai === true; if (location.hash === '#assistant') render(); }).catch(() => {});
+}
+app.addEventListener('input', () => { hasUnsavedForm = true; });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});

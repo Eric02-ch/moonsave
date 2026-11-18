@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { metrics, comparison, previousMonth, validateReport, validateBackup, validateSettings, defaultSettings, makeDemo, localInsights } from '../public/core.js';
+import { metrics, comparison, previousMonth, validateReport, validateBackup, validateDraft, validateSettings, defaultSettings, makeDemo, localInsights } from '../public/core.js';
 
 const report = () => ({ ...makeDemo()[0], month: '2026-10', asOf: '2026-10-10' });
 test('帳戶間轉帳不增加現金淨額', () => {
@@ -46,4 +46,11 @@ test('本機月報資料不足不推算；建議最多三項', () => {
   const result = localInsights(r, [r], defaultSettings);
   assert.equal(result.actions.length, 3);
   assert.match(result.observations[2], /還沒有上個月/);
+});
+test('含草稿備份保留未知數字，不把目標或空白變成已確認儲蓄', () => {
+  const draft = { ...report(), saved: null, extraSaved: '', wallet: undefined, confirmed: false };
+  const backup = validateBackup({ version: 1, settings: defaultSettings, reports: [], draft });
+  assert.equal(backup.draft.saved, null); assert.equal(backup.draft.extraSaved, null); assert.equal(backup.draft.wallet, null); assert.equal(backup.draft.confirmed, false);
+  assert.throws(() => validateReport(backup.draft));
+  assert.throws(() => validateDraft({ ...draft, emergency: -1 }));
 });

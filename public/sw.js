@@ -1,5 +1,5 @@
-const CACHE = 'moonsave-shell-v1';
-const FILES = ['./', './index.html', './styles.css', './app.js', './core.js', './icon.svg', './manifest.webmanifest'];
+const CACHE = 'moonsave-shell-v2';
+const FILES = ['./', './index.html', './styles.css', './app.js', './core.js', './sync.js', './icon.svg', './manifest.webmanifest'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)).then(() => self.skipWaiting())));
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith('moonsave-shell-') && k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())));
 self.addEventListener('fetch', event => {

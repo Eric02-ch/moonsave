@@ -29,7 +29,15 @@ export function validateBackup(data) {
   const settings = validateSettings(data.settings);
   const reports = data.reports.map(validateReport);
   if (new Set(reports.map(r => r.month)).size !== reports.length) throw new Error('備份包含重複月份。');
-  return { version: 1, settings, reports };
+  return { version: 1, settings, reports, ...(data.draft == null ? {} : { draft: validateDraft(data.draft) }) };
+}
+export function validateDraft(r) {
+  if (!r || typeof r !== 'object' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(r.month)) throw new Error('草稿月份格式錯誤。');
+  const candidate = { ...r, confirmed: true };
+  for (const key of moneyKeys) if (r[key] === null || r[key] === '' || r[key] === undefined) candidate[key] = 0;
+  const clean = validateReport(candidate);
+  for (const key of moneyKeys) if (r[key] === null || r[key] === '' || r[key] === undefined) clean[key] = null;
+  return { ...clean, confirmed: false };
 }
 export const sortReports = reports => [...reports].sort((a, b) => a.month.localeCompare(b.month));
 export function metrics(r, settings = defaultSettings) {
